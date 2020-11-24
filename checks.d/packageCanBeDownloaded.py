@@ -117,7 +117,7 @@ class PackageCanBeDownloaded(AgentCheck):
         weekly_version = self.get_latest_weekly_version()
         stable_version = self.get_latest_stable_version()
 
-        hostname = "get.jenkins.io"
+        hostname = "archives.jenkins.io"
 
         endpoints = {
             'debian': 'https://{}/debian/jenkins_{}_all.deb'
@@ -164,7 +164,7 @@ if __name__ == "__main__":
 
     weekly_version = p.get_latest_weekly_version(p)
     stable_version = p.get_latest_stable_version(p)
-    hostname = "get.jenkins.io"
+    hostname = "archives.jenkins.io"
 
     endpoints = {
         'debian': 'https://{}/debian/jenkins_{}_all.deb'
