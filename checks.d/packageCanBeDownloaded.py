@@ -31,6 +31,8 @@ class PackageCanBeDownloaded(AgentCheck):
         Tests that the latest jenkins packages can be downloaded
     """
 
+    root = None
+
     def build_tree(self, metadataUrl='https://repo.jenkins-ci.org/releases/org/jenkins-ci/main/jenkins-war/maven-metadata.xml'):
         try:
             tree = ET.parse(urlopen(metadataUrl))
@@ -41,8 +43,9 @@ class PackageCanBeDownloaded(AgentCheck):
             self.warning(f"Error when building tree from metadata url: {err}")
 
     def get_latest_weekly_version(self):    
-        root = self.build_tree()
-        return root.find('versioning/latest').text
+        if not self.root:
+            self.root = self.build_tree()
+        return self.root.find('versioning/latest').text
         
     def get_latest_stable_version(self):
         """
@@ -54,8 +57,9 @@ class PackageCanBeDownloaded(AgentCheck):
             - X.Y.Z is a stable version
         That is why we filter for stable versions with count('.') == 2.
         """
-        root = self.build_tree()
-        versions = root.findall('versioning/versions/version')
+        if not self.root:
+            self.root = self.build_tree()
+        versions = self.root.findall('versioning/versions/version')
         stable_versions = [version.text for version in versions if version.text.count('.') == 2]
 
         def as_version(ele):           
