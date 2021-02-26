@@ -9,45 +9,6 @@ import xml.etree.ElementTree as ET
 from datadog_checks.base.checks import AgentCheck
 
 
-def get_latest_version(versions):
-    '''
-        get_latest_version takes a list of Jenkins versions
-        then return the latest one.
-        It sorts separatelly each Jenkins versions components
-        which follow the pattern X.Y.Z where:
-            - X.Y is a weekly version
-            - X.Y.Z is a stable version
-        So we retrieve the latest X component version.
-        Then we look for the latest valid Y version considering X.
-        Finally we look for the latest Z version considering X.Y
-    '''
-
-    results = []
-    # for i in range(3) limit the sort to the first 3 components
-    for i in range(3):
-        solutions = []
-        for version in versions:
-            values = version.split('.')
-
-            str_results = [str(x) for x in results]
-
-            if (len(results) < len(values) and
-                    str_results[0:len(results)] == values[0:len(results)]):
-                try:
-                    if int(values[i]) not in solutions:
-                        solutions.append(int(values[i]))
-                except Exception:
-                    print("Ignoring version {}".format(values[i]))
-
-        if not solutions:
-            break
-
-        results.append(int(sorted(solutions)[-1]))
-
-    str_results = [str(x) for x in results]
-    return '.'.join(str_results)
-
-
 def is_exist(distribution, url):
     '''
         is_exist test if a specific artifact exist on the destination
@@ -55,155 +16,109 @@ def is_exist(distribution, url):
     try:
         return_code = urlopen(url).code
         if return_code != 200:
-            print('rc should be 200 but is {}'.format(return_code))
+            print(f'return code should be 200 but is {return_code}')
         return 1
     except HTTPError as err:
         if err.code == 404:
-            print('{} package not found on {}'.format(distribution, url))
+            print(f'{distribution} package not found on {url}')
         else:
-            print('Something went wrong with url {} for {} package: {}'
-                  .format(url, distribution, err))
+            print(f'Something went wrong with url {url} for {distribution} package: {err}')
         return 0
 
 
 class PackageCanBeDownloaded(AgentCheck):
-    '''
-       PackageCanBeDownloaded  tests that the latest jenkins packages
-       can be downloaded
-    '''
-    metadataUrl = 'https://repo.jenkins-ci.org/releases/org/jenkins-ci/main/jenkins-war/maven-metadata.xml'
+    """
+        Tests that the latest jenkins packages can be downloaded
+    """
 
-    def get_latest_weekly_version(self):
-        '''
-            getLatestWeeklyVersion retrieves the latest weekly version
-        '''
+    root = None
+
+    def build_tree(self, metadataUrl='https://repo.jenkins-ci.org/releases/org/jenkins-ci/main/jenkins-war/maven-metadata.xml'):
         try:
-            url = self.metadataUrl
-            tree = ET.parse(urlopen(url))
+            tree = ET.parse(urlopen(metadataUrl))
             root = tree.getroot()
-            return root.find('versioning/latest').text
+            return root
 
         except URLError as err:
-            self.warning("Something went wrong while retrieving weekly version: {}"
-                         .format(err))
+            self.warning(f"Error when building tree from metadata url: {err}")
 
+    def get_latest_weekly_version(self):    
+        if not self.root:
+            self.root = self.build_tree()
+        return self.root.find('versioning/latest').text
+        
     def get_latest_stable_version(self):
-        '''
-            getLatestStableVersion retrieves the latest stable version
-        '''
-        try:
-            stable_version = []
-            url = self.metadataUrl
-            tree = ET.parse(urlopen(url))
-            root = tree.getroot()
+        """
+        Input: a list of Jenkins versions
+        Output: returns the latest stable version
 
-            versions = root.findall('versioning/versions/version')
+        Jenkins versions follow the pattern X.Y.Z where:
+            - X.Y is a weekly version
+            - X.Y.Z is a stable version
+        That is why we filter for stable versions with count('.') == 2.
+        """
+        if not self.root:
+            self.root = self.build_tree()
+        versions = self.root.findall('versioning/versions/version')
+        stable_versions = [version.text for version in versions if version.text.count('.') == 2]
 
-            for version in versions:
-                if len(version.text.split('.')) == 3:
-                    stable_version.append(version.text)
+        def as_version(ele):           
+            major, minor, patch = ele.split('.')
+            if not patch.isdigit():
+                return [int(major), int(minor)]
+            return [int(major), int(minor), int(patch)]
 
-            return get_latest_version(stable_version)
+        stable_versions.sort(key=as_version, reverse=True)
+        return stable_versions[0]
 
-        except URLError as err:
-            self.warning("Something went wrong while retrieving stable version: {}"
-                         .format(err))
 
-    def check(self, instance):
-        '''
-            check defines the datadog custom check
-        '''
-
+    def create_endpoints(self, hostname='get.jenkins.io'):
         weekly_version = self.get_latest_weekly_version()
         stable_version = self.get_latest_stable_version()
 
-        hostname = "get.jenkins.io"
-
         endpoints = {
-            'debian': 'https://{}/debian/jenkins_{}_all.deb'
-                      .format(hostname, weekly_version),
-            'redhat': 'https://{}/redhat/jenkins-{}-1.1.noarch.rpm'
-                      .format(hostname, weekly_version),
-            'opensuse': 'https://{}/opensuse/jenkins-{}-1.2.noarch.rpm'
-                      .format(hostname, weekly_version),
-            'windows': 'https://{}/windows/{}/jenkins.msi'
-                      .format(hostname, weekly_version),
-            'war': 'https://{}/war/{}/jenkins.war'
-                      .format(hostname, weekly_version),
-            'debian-stable': 'https://{}/debian-stable/jenkins_{}_all.deb'
-                      .format(hostname, stable_version),
-            'redhat-stable': 'https://{}/redhat-stable/jenkins-{}-1.1.noarch.rpm'
-                      .format(hostname, stable_version),
-            'windows-stable': 'https://{}/windows-stable/{}/jenkins.msi'
-                      .format(hostname, stable_version),
-            'opensuse-stable': 'https://{}/opensuse-stable/jenkins-{}-1.2.noarch.rpm'
-                      .format(hostname, stable_version),
-            'war-stable': 'https://{}/war-stable/{}/jenkins.war'
-                      .format(hostname, stable_version),
+            'debian': f'https://{hostname}/debian/jenkins_{weekly_version}_all.deb',
+            'redhat': f'https://{hostname}/redhat/jenkins-{weekly_version}-1.1.noarch.rpm',
+            'opensuse': f'https://{hostname}/opensuse/jenkins-{weekly_version}-1.2.noarch.rpm',
+            'windows': f'https://{hostname}/windows/{weekly_version}/jenkins.msi',
+            'war': f'https://{hostname}/war/{weekly_version}/jenkins.war',
+            'debian-stable': f'https://{hostname}/debian-stable/jenkins_{stable_version}_all.deb',
+            'redhat-stable': f'https://{hostname}/redhat-stable/jenkins-{stable_version}-1.1.noarch.rpm',
+            'windows-stable': f'https://{hostname}/windows-stable/{stable_version}/jenkins.msi',
+            'opensuse-stable': f'https://{hostname}/opensuse-stable/jenkins-{stable_version}-1.2.noarch.rpm',
+            'war-stable': f'https://{hostname}/war-stable/{stable_version}/jenkins.war',
         }
+        return endpoints 
 
+    def check(self, instance):
+        """
+            Datadog custom check
+        """
+        endpoints = self.create_endpoints()
         metric = 'jenkins.package.available'
         package = instance['package']
-        self.warning("PackageAvailable: {}".format(package))
-        tags = [
-            "package:" + package,
-        ]
+        self.warning(f"PackageAvailable: {package}")
+        tags = ["package:" + package,]
 
-        if endpoints.__contains__(package):
+        if package in endpoints:
             self.gauge(metric, is_exist(package, endpoints[package]), tags)
         else:
-            self.warning("PackageCanDownload: Package {} is not supported"
-                         .format(package))
+            self.warning(f"PackageCanDownload: Package {package} is not supported")
 
 
 if __name__ == "__main__":
     '''
-        Only there for testing purposes
+        This exists only for testing purposes
     '''
-    p = PackageCanBeDownloaded
+    p = PackageCanBeDownloaded()
+    weekly_version = p.get_latest_weekly_version()
+    stable_version = p.get_latest_stable_version()
+    print(f"Latest weekly version: {weekly_version}")
+    print(f"Latest stable version: {stable_version}")
 
-    weekly_version = p.get_latest_weekly_version(p)
-    stable_version = p.get_latest_stable_version(p)
-    hostname = "get.jenkins.io"
-
-    endpoints = {
-        'debian': 'https://{}/debian/jenkins_{}_all.deb'
-                  .format(hostname, weekly_version),
-        'redhat': 'https://{}/redhat/jenkins-{}-1.1.noarch.rpm'
-                  .format(hostname, weekly_version),
-        'opensuse': 'https://{}/opensuse/jenkins-{}-1.2.noarch.rpm'
-                  .format(hostname, weekly_version),
-        'war': 'https://{}/war/{}/jenkins.war'
-                  .format(hostname, weekly_version),
-        'windows': 'https://{}/windows/{}/jenkins.msi'
-                  .format(hostname, weekly_version),
-        'debian-stable': 'https://{}/debian-stable/jenkins_{}_all.deb'
-                  .format(hostname, stable_version),
-        'redhat-stable': 'https://{}/redhat-stable/jenkins-{}-1.1.noarch.rpm'
-                  .format(hostname, stable_version),
-        'windows-stable': 'https://{}/windows-stable/{}/jenkins.msi'
-                  .format(hostname, stable_version),
-        'opensuse-stable': 'https://{}/opensuse-stable/jenkins-{}-1.2.noarch.rpm'
-                  .format(hostname, stable_version),
-        'war-stable': 'https://{}/war-stable/{}/jenkins.war'
-                  .format(hostname, stable_version),
-    }
-
-    print("Latest weekly version: {}".format(weekly_version))
-    print("Latest stable version: {}".format(stable_version))
-
-    packages = [
-        "debian", "debian-stable",
-        "redhat", "redhat-stable",
-        "opensuse", "opensuse-stable",
-        "war", "war-stable",
-        "windows", "windows-stable",
-    ]
-
-    for package in packages:
-        if not is_exist(package, endpoints[package]):
-            print("Latest version for package {} unailable from {}"
-                  .format(package, endpoints[package]))
+    endpoints = p.create_endpoints()
+    for package, message in endpoints.items():
+        if not is_exist(package, message):
+            print(f"Latest version for package {package} not available from {message}")
         else:
-            print("Latest version for package {} available from {}"
-                  .format(package, endpoints[package]))
+            print(f"Latest version for package {package} available from {message}")
