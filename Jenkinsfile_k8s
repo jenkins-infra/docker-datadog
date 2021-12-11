@@ -1,1 +1,1 @@
-buildDockerAndPublishImage('datadog', [mainBranch: 'main'])  
+parallelDockerUpdatecli([imageName: 'datadog'])
