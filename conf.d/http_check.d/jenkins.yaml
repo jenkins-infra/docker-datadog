@@ -98,6 +98,18 @@ instances:
     tags:
       - production
       - jenkins.io
+  - name: repo.jenkins-ci.org
+    url: https://repo.jenkins-ci.org/api/system/ping
+    timeout: 10
+    threshold: 3
+    window: 5
+    collect_response_time: true
+    check_certificate_expiration: true
+    days_warning: 30
+    days_critical: 10
+    tags:
+      - production
+      - jenkins-ci.org
   - name: reports.jenkins.io
     url: https://reports.jenkins.io/artifactory-ldap-users-report.json
     timeout: 10
